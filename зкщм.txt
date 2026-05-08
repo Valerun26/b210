@@ -1,0 +1,976 @@
+`timescale 1ns / 1ps
+
+module initialization(
+        (* mark_debug = "true" *) output logic 	 		enable,   // Enable
+        (* mark_debug = "true" *) input  wire	 		    miso,   // MISO
+        (* mark_debug = "true" *) output logic 	 		mosi,   // MOSI
+        (* mark_debug = "true" *) output logic 	 		spi_clk,  // SPI Clk
+        (* mark_debug = "true" *) output logic            resetb,
+        
+        input wire clk_200,
+        input wire clk,
+        input wire start_init,  
+        output logic finish_init,
+        output logic device_id_error,
+        output logic is_init,
+        output logic is_start_trans_w,
+        output logic wait_st,
+        output logic start_get_word,
+
+        output logic [7:0] from_AD
+    );
+    
+    typedef enum {
+        IDLE,                   //0
+        RESETB_DOWN,            //1
+        RESETB_UP,              //2
+        START_TRANSMIT_WORD,    //3
+        START_TRANSMIT_FIR,     //4
+        START_TRANSMIT_MIXER_GAIN_TABLE,    //5
+        WAIT_FOR_TRANSMIT,      //6
+        WAIT_STATE,             //7
+        WAIT_STATE_2MS,         //8
+        WAIT_STATE_1MS,         //9
+        GET_WORD_BRAM_WAITOR,   //10
+        START_GET_WORD,         //11
+        ANALYSES_NEXT,          //12
+        FINISH_INIT,            //13
+        DEVICE_ID_ERROR         //14
+    } state_t;
+    
+    (* mark_debug = "true" *) state_t current_state, next_state;
+    
+    assign is_init = current_state == IDLE;
+    assign is_start_trans_w = current_state == START_TRANSMIT_WORD;
+    assign wait_st = current_state == WAIT_STATE;
+    assign start_get_word = current_state == START_GET_WORD;
+    
+    logic start_transmit;
+    
+    assign start_transmit = current_state == START_TRANSMIT_WORD || current_state == START_GET_WORD || current_state == START_TRANSMIT_FIR || current_state == START_TRANSMIT_MIXER_GAIN_TABLE;
+    assign device_id_error = current_state == DEVICE_ID_ERROR;
+    assign finish_init = current_state == FINISH_INIT;
+    wire finish_transmit;
+    
+    (* mark_debug = "true" *) logic [9:0] address;
+    (* mark_debug = "true" *) logic [7:0] data_to_AD;
+    logic is_write;
+    
+    (* mark_debug = "true" *) wire [7:0] data_from_AD;
+    
+    (* mark_debug = "true" *) logic [11:0] counter;
+    (* mark_debug = "true" *) logic [1:0] counter_start;
+    
+    logic [4:0] counter_charge_pumps;
+    
+    logic [3:0] device_id;
+    
+    (* mark_debug = "true" *) logic [19:0] wait_counter;
+    
+    logic [5:0] reset_counter;
+    (* mark_debug = "true" *) logic [9:0] counter_BBPLL;
+
+    (* mark_debug = "true" *) logic [6:0] fir_coef_1_addr;
+    (* mark_debug = "true" *) wire [15:0] fir_coef_1;
+    wire [15:0] fir_coef_2;
+    (* mark_debug = "true" *) logic wait_bram_count_fir;
+    logic wait_bram_count_gain_table;
+     
+    logic [3:0] mixer_gain_table_addr;
+    wire [15:0] mixer_gain_table_coef;
+    logic [3:0] start_transmit_mixer_gain_table_increase_cycle;
+    
+    (* mark_debug = "true" *) logic [3:0] start_transmit_fir_increase_cycle;
+    logic [3:0] start_transmit_gain_table_increase_cycle;
+    
+    blk_mem_gen_ad9361_init_fir_tx_coef tx_coef (
+        .clka(clk),
+        .addra(fir_coef_1_addr),
+        .douta(fir_coef_1)
+    );
+    
+    blk_mem_gen_ad9361_init_fir_tx2_coef tx_coef_2 (
+        .clka(clk),
+        .addra(fir_coef_1_addr),
+        .douta(fir_coef_2)
+    );
+    
+    blk_mem_gen_ad9361_init_mixer_gain_table gain_table_coef(
+        .clka(clk),
+        .addra(mixer_gain_table_addr),
+        .douta(mixer_gain_table_coef)
+    );
+
+    spi_master spi_master_init (
+        .clk(clk),
+        .clk_200(clk_200),
+        .enable(enable),
+        .miso(miso),
+        .mosi(mosi),
+        .spi_clk(spi_clk),
+        .address(address),
+        .data_to_AD(data_to_AD),
+        .is_write(is_write),
+        .data_from_AD(data_from_AD),
+        .start_transmit(start_transmit),
+        .finish_transmit(finish_transmit)
+    );
+    
+    always @(posedge clk) begin
+        current_state <= next_state;
+
+        case (current_state)
+            IDLE: begin
+                counter <= 0;
+                counter_start <= 0;
+                wait_counter <= 0;
+                resetb <= 0;
+                reset_counter <= 0;
+                counter_BBPLL <= 0;
+                counter_charge_pumps <= 0;
+            end
+            RESETB_DOWN: begin
+                resetb <= 0;
+                reset_counter <= reset_counter + 1;
+                wait_counter <= 0;
+                counter_BBPLL <= 0;
+                counter_charge_pumps <= 0;
+                wait_bram_count_fir <= 0;
+                wait_bram_count_gain_table <= 0;
+                fir_coef_1_addr <= 0;
+                start_transmit_fir_increase_cycle <= 0;
+                start_transmit_gain_table_increase_cycle <= 0;
+                mixer_gain_table_addr <= 0;
+            end
+            RESETB_UP: begin
+                resetb <= 1;
+                reset_counter <= reset_counter + 1;
+            end
+            START_TRANSMIT_WORD: begin
+                counter_start <= counter_start + 1;
+                if (counter == 0) begin
+                    address <= 10'h000;
+                    data_to_AD <= 8'h81;
+                    is_write <= 1;
+                end else if (counter == 1) begin
+                    address <= 10'h000;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == 3) begin
+                    address <= 10'h3df;
+                    data_to_AD <= 8'h01;
+                    is_write <= 1;
+                end else if (counter == 4) begin
+                    address <= 10'h2a6;
+                    data_to_AD <= 8'h0e;
+                    is_write <= 1;
+                end else if (counter == 5) begin
+                    address <= 10'h2a8;
+                    data_to_AD <= 8'h0e;
+                    is_write <= 1;
+                end else if (counter == 6) begin
+                    address <= 10'h2ab;
+                    data_to_AD <= 8'h07;
+                    is_write <= 1;
+                end else if (counter == 7) begin
+                    address <= 10'h2ac;
+                    data_to_AD <= 8'hff;
+                    is_write <= 1;
+                end else if (counter == 8) begin
+                    address <= 10'h009;
+                    data_to_AD <= 8'h17;
+                    is_write <= 1;
+                end else if (counter == 9) begin
+                    address <= 10'h045;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == 10) begin
+                    address <= 10'h046;
+                    data_to_AD <= 8'h04;
+                    is_write <= 1;
+                end else if (counter == 11) begin
+                    address <= 10'h048;
+                    data_to_AD <= 8'he8;
+                    is_write <= 1;
+                end else if (counter == 12) begin
+                    address <= 10'h049;
+                    data_to_AD <= 8'h5b;
+                    is_write <= 1;
+                end else if (counter == 13) begin
+                    address <= 10'h04a;
+                    data_to_AD <= 8'h35;
+                    is_write <= 1;
+                end else if (counter == 14) begin
+                    address <= 10'h04b;
+                    data_to_AD <= 8'he0;
+                    is_write <= 1;
+                end else if (counter == 15) begin
+                    address <= 10'h04e;
+                    data_to_AD <= 8'h10;
+                    is_write <= 1;
+                end else if (counter == 16) begin
+                    address <= 10'h043;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == 17) begin
+                    address <= 10'h042;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == 18) begin
+                    address <= 10'h041;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == 19) begin
+                    address <= 10'h044;
+                    data_to_AD <= 8'h1e;
+                    is_write <= 1;
+                end else if (counter == 20) begin
+                    address <= 10'h03F;
+                    data_to_AD <= 8'h05;
+                    is_write <= 1;
+                end else if (counter == 21) begin
+                    address <= 10'h03F;
+                    data_to_AD <= 8'h01;
+                    is_write <= 1;
+                end else if (counter == 22) begin
+                    address <= 10'h04c;
+                    data_to_AD <= 8'h86;
+                    is_write <= 1;
+                end else if (counter == 23) begin
+                    address <= 10'h04d;
+                    data_to_AD <= 8'h01;
+                    is_write <= 1;
+                end else if (counter == 24) begin
+                    address <= 10'h04d;
+                    data_to_AD <= 8'h05;
+                    is_write <= 1;
+                end else if (counter == 26) begin
+                    address <= 10'h002;
+                    data_to_AD <= 8'hE2;
+                    is_write <= 1;
+                end else if (counter == 27) begin
+                    address <= 10'h003;
+                    data_to_AD <= 8'hE6;
+                    is_write <= 1;
+                end else if (counter == 28) begin
+                    address <= 10'h004;
+                    data_to_AD <= 8'h30;
+                    is_write <= 1;
+                end else if (counter == 29) begin
+                    address <= 10'h00A;
+                    data_to_AD <= 8'h02;
+                    is_write <= 1;
+                end else if (counter == 30) begin
+                    address <= 10'h065;
+                    data_to_AD <= 8'hFA;
+                    is_write <= 1;
+                end else if (counter == 1573) begin //get_digital_interface_mode
+                    address <= 10'h010;
+                    data_to_AD <= 8'hC8;
+                    is_write <= 1;                
+                end else if (counter == 1574) begin
+                    address <= 10'h011;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1575) begin
+                    address <= 10'h012;
+                    data_to_AD <= 8'h02;
+                    is_write <= 1;                
+                end else if (counter == 1576) begin //get_digital_interface_timing
+                    address <= 10'h006;
+                    data_to_AD <= 8'h0F;
+                    is_write <= 1;                
+                end else if (counter == 1577) begin
+                    address <= 10'h007;
+                    data_to_AD <= 8'h0F;
+                    is_write <= 1;                
+                end else if (counter == 1578) begin //Setup AuxDAC
+                    address <= 10'h018;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1579) begin
+                    address <= 10'h019;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1580) begin
+                    address <= 10'h1A;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1581) begin
+                    address <= 10'h01B;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1582) begin
+                    address <= 10'h023;
+                    data_to_AD <= 8'hFF;
+                    is_write <= 1;                
+                end else if (counter == 1583) begin
+                    address <= 10'h026;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1584) begin
+                    address <= 10'h030;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1585) begin
+                    address <= 10'h031;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1586) begin
+                    address <= 10'h032;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1587) begin
+                    address <= 10'h033;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1588) begin
+                    address <= 10'h022;
+                    data_to_AD <= 8'h0A;
+                    is_write <= 1;                
+                end else if (counter == 1589) begin //setup AuxADC again
+                    address <= 10'h00B;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1590) begin
+                    address <= 10'h00C;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1591) begin
+                    address <= 10'h00D;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end  else if (counter == 1592) begin
+                    address <= 10'h00F;
+                    data_to_AD <= 8'h04;
+                    is_write <= 1;                
+                end  else if (counter == 1593) begin
+                    address <= 10'h01C;
+                    data_to_AD <= 8'h10;
+                    is_write <= 1;                
+                end  else if (counter == 1594) begin
+                    address <= 10'h01D;
+                    data_to_AD <= 8'h01;
+                    is_write <= 1;                
+                end  else if (counter == 1595) begin //Setup control outputs
+                    address <= 10'h035;
+                    data_to_AD <= 8'h01;
+                    is_write <= 1;                
+                end  else if (counter == 1596) begin
+                    address <= 10'h036;
+                    data_to_AD <= 8'hFF;
+                    is_write <= 1;                
+                end  else if (counter == 1597) begin //Setup GPO
+                    address <= 10'h03A;
+                    data_to_AD <= 8'h27;
+                    is_write <= 1;                
+                end else if (counter == 1598) begin
+                    address <= 10'h020;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1599) begin
+                    address <= 10'h027;
+                    data_to_AD <= 8'h03;
+                    is_write <= 1;                
+                end else if (counter == 1600) begin
+                    address <= 10'h028;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1601) begin
+                    address <= 10'h029;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1602) begin
+                    address <= 10'h02A; 
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1603) begin
+                    address <= 10'h02B;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1604) begin
+                    address <= 10'h02C;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1605) begin
+                    address <= 10'h02D;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1606) begin
+                    address <= 10'h02E;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1607) begin
+                    address <= 10'h02F;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1608) begin
+                    address <= 10'h261;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1609) begin
+                    address <= 10'h2A1;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1610) begin
+                    address <= 10'h248;
+                    data_to_AD <= 8'h0B;
+                    is_write <= 1;                
+                end else if (counter == 1611) begin
+                    address <= 10'h288;
+                    data_to_AD <= 8'h0B;
+                    is_write <= 1;                
+                end else if (counter == 1612) begin
+                    address <= 10'h246;
+                    data_to_AD <= 8'h02;
+                    is_write <= 1;                
+                end else if (counter == 1613) begin
+                    address <= 10'h286;
+                    data_to_AD <= 8'h02;
+                    is_write <= 1;                
+                end else if (counter == 1614) begin
+                    address <= 10'h249;
+                    data_to_AD <= 8'h8E;
+                    is_write <= 1;                
+                end else if (counter == 1615) begin
+                    address <= 10'h289;
+                    data_to_AD <= 8'h8E;
+                    is_write <= 1;                
+                end else if (counter == 1616) begin
+                    address <= 10'h23B;
+                    data_to_AD <= 8'h80;
+                    is_write <= 1;                
+                end else if (counter == 1617) begin
+                    address <= 10'h27B;
+                    data_to_AD <= 8'h80;
+                    is_write <= 1;                
+                end else if (counter == 1618) begin
+                    address <= 10'h243;
+                    data_to_AD <= 8'h0D;
+                    is_write <= 1;                
+                end else if (counter == 1619) begin
+                    address <= 10'h283;
+                    data_to_AD <= 8'h0D;
+                    is_write <= 1;                
+                end else if (counter == 1620) begin
+                    address <= 10'h23D;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1621) begin
+                    address <= 10'h27D;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1622) begin
+                    address <= 10'h015;
+                    data_to_AD <= 8'h04;
+                    is_write <= 1;                
+                end else if (counter == 1623) begin
+                    address <= 10'h014;
+                    data_to_AD <= 8'h05;
+                    is_write <= 1;                
+                end else if (counter == 1624) begin
+                    address <= 10'h013;
+                    data_to_AD <= 8'h01;
+                    is_write <= 1;                
+                end else if (counter == 1626) begin //_calibrate_synth_charge_pumps
+                    address <= 10'h23D;
+                    data_to_AD <= 8'h04;
+                    is_write <= 1;                
+                end else if (counter == 1628) begin
+                    address <= 10'h23D;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1629) begin
+                    address <= 10'h27D;
+                    data_to_AD <= 8'h04;
+                    is_write <= 1;                
+                end else if (counter == 1631) begin
+                    address <= 10'h27D;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1632) begin //_tune_helper_RX
+                    address <= 10'h004;
+                    data_to_AD <= 8'h30;
+                    is_write <= 1;                
+                end else if (counter == 1633) begin //setup_synth_RX
+                    address <= 10'h23A;
+                    data_to_AD <= 8'h4A;
+                    is_write <= 1;                
+                end else if (counter == 1634) begin 
+                    address <= 10'h239;
+                    data_to_AD <= 8'hC3;
+                    is_write <= 1;                
+                end else if (counter == 1635) begin 
+                    address <= 10'h242;
+                    data_to_AD <= 8'h1F;
+                    is_write <= 1;                
+                end else if (counter == 1636) begin 
+                    address <= 10'h238;
+                    data_to_AD <= 8'h78;
+                    is_write <= 1;                
+                end else if (counter == 1637) begin 
+                    address <= 10'h245;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1638) begin 
+                    address <= 10'h251;
+                    data_to_AD <= 8'h0C;
+                    is_write <= 1;                
+                end else if (counter == 1639) begin 
+                    address <= 10'h250;
+                    data_to_AD <= 8'h70;
+                    is_write <= 1;                
+                end else if (counter == 1640) begin 
+                    address <= 10'h23B;
+                    data_to_AD <= 8'h92;
+                    is_write <= 1;                
+                end else if (counter == 1641) begin 
+                    address <= 10'h23E;
+                    data_to_AD <= 8'hD4;
+                    is_write <= 1;                
+                end else if (counter == 1642) begin 
+                    address <= 10'h23F;
+                    data_to_AD <= 8'hDF;
+                    is_write <= 1;                
+                end else if (counter == 1643) begin 
+                    address <= 10'h240;
+                    data_to_AD <= 8'h09;
+                    is_write <= 1;                
+                end else if (counter == 1644) begin //_tune_helper_RX 
+                    address <= 10'h233;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1645) begin 
+                    address <= 10'h234;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1646) begin 
+                    address <= 10'h235;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1647) begin 
+                    address <= 10'h232;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1648) begin 
+                    address <= 10'h231;
+                    data_to_AD <= 8'h50;
+                    is_write <= 1;                
+                end else if (counter == 1649) begin 
+                    address <= 10'h005;
+                    data_to_AD <= 8'h02;
+                    is_write <= 1;                
+                end else if (counter == 1651) begin //_tune_helper_TX
+                    address <= 10'h004;
+                    data_to_AD <= 8'h70;
+                    is_write <= 1;                
+                end else if (counter == 1652) begin //_setup_synth_TX
+                    address <= 10'h27A;
+                    data_to_AD <= 8'h4A;
+                    is_write <= 1;                
+                end else if (counter == 1653) begin 
+                    address <= 10'h279;
+                    data_to_AD <= 8'hC1;
+                    is_write <= 1;                
+                end else if (counter == 1654) begin 
+                    address <= 10'h282;
+                    data_to_AD <= 8'h17;
+                    is_write <= 1;                
+                end else if (counter == 1655) begin 
+                    address <= 10'h278;
+                    data_to_AD <= 8'h78;
+                    is_write <= 1;                
+                end else if (counter == 1656) begin 
+                    address <= 10'h285;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1657) begin 
+                    address <= 10'h291;
+                    data_to_AD <= 8'h0E;
+                    is_write <= 1;                
+                end else if (counter == 1658) begin 
+                    address <= 10'h290;
+                    data_to_AD <= 8'h70;
+                    is_write <= 1;                
+                end else if (counter == 1659) begin 
+                    address <= 10'h27B;
+                    data_to_AD <= 8'h98;
+                    is_write <= 1;                
+                end else if (counter == 1660) begin 
+                    address <= 10'h27E;
+                    data_to_AD <= 8'hD4;
+                    is_write <= 1;                
+                end else if (counter == 1661) begin 
+                    address <= 10'h27F;
+                    data_to_AD <= 8'hDF;
+                    is_write <= 1;                
+                end else if (counter == 1662) begin 
+                    address <= 10'h280;
+                    data_to_AD <= 8'h09;
+                    is_write <= 1;                
+                end else if (counter == 1663) begin //_tune_helper_TX
+                    address <= 10'h273;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1664) begin 
+                    address <= 10'h274;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1665) begin 
+                    address <= 10'h275;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1666) begin 
+                    address <= 10'h272;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;                
+                end else if (counter == 1667) begin 
+                    address <= 10'h271;
+                    data_to_AD <= 8'h55;
+                    is_write <= 1;                
+                end else if (counter == 1668) begin 
+                    address <= 10'h005;
+                    data_to_AD <= 8'h22;
+                    is_write <= 1;                
+                end else if (counter == 1670) begin 
+                    address <= 10'h13F;
+                    data_to_AD <= 8'h02;
+                    is_write <= 1;                
+                end 
+            end
+            
+            START_TRANSMIT_MIXER_GAIN_TABLE: begin
+                counter_start <= counter_start + 1;
+                wait_bram_count_gain_table <= 0;
+                start_transmit_mixer_gain_table_increase_cycle <= start_transmit_mixer_gain_table_increase_cycle + 1;
+                
+                if (counter == (1671 + mixer_gain_table_addr * 7)) begin
+                    address <= 10'h138;
+                    data_to_AD <= 8'h00 + ~mixer_gain_table_addr;
+                    is_write <= 1;
+                end else if (counter == (1672 + mixer_gain_table_addr * 7)) begin
+                    address <= 10'h139;
+                    data_to_AD <= mixer_gain_table_coef;
+                    is_write <= 1;
+                end else if (counter == (1673 + mixer_gain_table_addr * 7)) begin
+                    address <= 10'h13A;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end  else if (counter == (1674 + mixer_gain_table_addr * 7)) begin
+                    address <= 10'h13B;
+                    data_to_AD <= 8'hF1; //proverka na gm
+                    is_write <= 1;
+                end else if (counter == (1675 + mixer_gain_table_addr * 7)) begin
+                    address <= 10'h13F;
+                    data_to_AD <= 8'h06;
+                    is_write <= 1;
+                end else if (counter == (1676 + mixer_gain_table_addr * 7)) begin
+                    address <= 10'h13C;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == (1677 + mixer_gain_table_addr * 7)) begin
+                    address <= 10'h13C;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                    mixer_gain_table_addr <= mixer_gain_table_addr + 1;
+                end
+            end
+            
+            START_TRANSMIT_FIR: begin
+                counter_start <= counter_start + 1;
+                wait_bram_count_fir <= 0;
+                start_transmit_fir_increase_cycle <= start_transmit_fir_increase_cycle + 1;
+
+                if (counter == (31 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h060;
+                    data_to_AD <= fir_coef_1_addr;
+                    is_write <= 1;
+                end else if (counter == (32 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h061;
+                    data_to_AD <= fir_coef_1;
+                    is_write <= 1;
+                end else if (counter == (33 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h062;
+                    data_to_AD <= fir_coef_2;
+                    is_write <= 1;
+                end else if (counter == (34 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h065;
+                    data_to_AD <= 8'hFE;
+                    is_write <= 1;
+                end else if (counter == (35 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h064;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == (36 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h064;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                    fir_coef_1_addr <= fir_coef_1_addr + 1;
+                end
+                
+                else if (counter == 799) begin
+                    address <= 10'h065;
+                    data_to_AD <= 8'hFA;
+                    is_write <= 1;       
+                    fir_coef_1_addr <= 0;             
+                end else if (counter == 800) begin
+                    address <= 10'h065;
+                    data_to_AD <= 8'hF8;
+                    is_write <= 1;
+                end
+                
+                //RX_fir
+                else if (counter == 801) begin
+                    address <= 10'h0F5;
+                    data_to_AD <= 8'hFA;
+                    is_write <= 1;
+
+                end
+                
+                if (counter == (802 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h0F0;
+                    data_to_AD <= fir_coef_1_addr;
+                    is_write <= 1;
+                end else if (counter == (803 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h0F1;
+                    data_to_AD <= fir_coef_1;
+                    is_write <= 1;
+                end else if (counter == (804 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h0F2;
+                    data_to_AD <= fir_coef_2;
+                    is_write <= 1;
+                end else if (counter == (805 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h0F5;
+                    data_to_AD <= 8'hFE;
+                    is_write <= 1;
+                end else if (counter == (806 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h0F4;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                end else if (counter == (807 + fir_coef_1_addr * 6)) begin
+                    address <= 10'h0F4;
+                    data_to_AD <= 8'h00;
+                    is_write <= 1;
+                    fir_coef_1_addr <= fir_coef_1_addr + 1;
+                end else if (counter == 1570) begin
+                    address <= 10'h0F5;
+                    data_to_AD <= 8'hFA;
+                    is_write <= 1;
+                end else if (counter == 1571) begin
+                    address <= 10'h0F5;
+                    data_to_AD <= 8'hF8;
+                    is_write <= 1;
+                end  else if (counter == 1572) begin
+                    address <= 10'h0F6;
+                    data_to_AD <= 8'h02;
+                    is_write <= 1;
+                end   
+            end
+            START_GET_WORD: begin
+                counter_start <= counter_start + 1;
+                wait_counter <= 0;
+                if (counter == 2) begin
+                    address <= 10'h037;
+                    is_write <= 0;
+                end else if (counter == 25) begin
+                    address <= 10'h05e;
+                    data_to_AD <= 8'h00;
+                    is_write <= 0;
+                end else if (counter == 1625) begin
+                    address <= 10'h017;
+                    data_to_AD <= 8'h00;
+                    is_write <= 0;
+                end else if (counter == 1627) begin //_calibrate_synth_charge_pumps
+                    address <= 10'h244;
+                    data_to_AD <= 8'h00;
+                    is_write <= 0;
+                end else if (counter == 1630) begin //_calibrate_synth_charge_pumps
+                    address <= 10'h284;
+                    data_to_AD <= 8'h00;
+                    is_write <= 0;
+                end else if (counter == 1650) begin //_tune_helper_RX
+                    address <= 10'h247;
+                    data_to_AD <= 8'h00;
+                    is_write <= 0;
+                end else if (counter == 1669) begin  //_tune_helper_TX
+                    address <= 10'h287;
+                    data_to_AD <= 8'h00;
+                    is_write <= 0;                
+                end
+            end
+            WAIT_STATE: begin
+                wait_counter <= wait_counter + 1;
+            end
+            WAIT_STATE_2MS: begin
+                wait_counter <= wait_counter + 1;
+            end
+            WAIT_STATE_1MS: begin
+                wait_counter <= wait_counter + 1;
+            end
+            GET_WORD_BRAM_WAITOR: begin
+                wait_bram_count_fir <= wait_bram_count_fir + 1;
+                wait_bram_count_gain_table <= wait_bram_count_gain_table + 1;
+                start_transmit_fir_increase_cycle <= 0;
+                start_transmit_mixer_gain_table_increase_cycle <= 0;
+            end
+            ANALYSES_NEXT: begin
+                if (counter == 2) begin
+                    device_id <= data_from_AD & 8'hf8;
+                    from_AD <= data_from_AD;
+                    counter <= counter + 1;
+                end else if (counter == 25) begin
+                    counter_BBPLL <= counter_BBPLL + 1;
+                    if (data_from_AD & 8'h80) begin
+                        counter <= counter + 1;
+                    end
+                end else if (counter == 1625) begin //_calibrate_synth_charge_pumps
+                    //if (data_from_AD & 8'h0F) begin
+                        counter <= counter + 1;
+                        //end
+                end else if (counter == 1627) begin //_calibrate_synth_charge_pumps
+                    counter_charge_pumps <= counter_charge_pumps + 1; 
+                    if (data_from_AD & 8'h80) begin
+                        counter_charge_pumps <= 0;
+                        counter <= counter + 1;
+                    end
+                end else if (counter == 1630) begin //_calibrate_synth_charge_pumps
+                    counter_charge_pumps <= counter_charge_pumps + 1; 
+                    if (data_from_AD & 8'h80) begin
+                        counter <= counter + 1;
+                        end
+                end else if (counter == 1650) begin //_tune_helper_RX
+                    counter <= counter + 1;
+                end else if (counter == 1669) begin //_tune_helper_TX
+                    counter <= counter + 1;        
+                end else begin
+                    counter <= counter + 1;
+                end
+                counter_start <= 0;
+
+                wait_counter <= 0;
+            end
+            DEVICE_ID_ERROR: begin
+                counter <= 0;
+                counter_BBPLL <= 0;
+                wait_counter <= wait_counter + 1;
+            end
+            FINISH_INIT: begin
+                counter <= 0;
+                wait_counter <= wait_counter + 1;
+            end
+        endcase
+    end
+
+    always_comb begin
+        next_state = current_state;
+        
+        case (current_state)
+            IDLE:
+                if (start_init)
+                    next_state = RESETB_DOWN;
+            RESETB_DOWN:
+                if (reset_counter == 63)
+                    next_state = RESETB_UP;
+            RESETB_UP:
+                if (reset_counter == 63)
+                    next_state = START_TRANSMIT_WORD;
+            START_TRANSMIT_WORD:
+                if (counter_start == 3)
+                    next_state = WAIT_FOR_TRANSMIT;
+            START_TRANSMIT_FIR:
+                if (counter_start == 3) begin
+                    if (start_transmit_fir_increase_cycle == 6) begin
+                        next_state = GET_WORD_BRAM_WAITOR;
+                    end else begin
+                        next_state = WAIT_FOR_TRANSMIT;
+                    end
+                end
+            START_TRANSMIT_MIXER_GAIN_TABLE:
+                if (counter_start == 3) begin
+                    if (start_transmit_mixer_gain_table_increase_cycle == 6) begin
+                        next_state = GET_WORD_BRAM_WAITOR;
+                    end else begin
+                        next_state = WAIT_FOR_TRANSMIT;
+                    end
+                end    
+            START_GET_WORD:
+                if (counter_start == 3)
+                    next_state = WAIT_FOR_TRANSMIT;
+            WAIT_FOR_TRANSMIT:
+                if (finish_transmit)
+                    next_state = ANALYSES_NEXT;
+            WAIT_STATE:
+                if (wait_counter == 20'h30D40) begin
+                    if (counter == 2 || counter == 1625 || counter == 1627 || counter == 1630 || counter == 1650 || counter == 1669) begin
+                        next_state = START_GET_WORD;
+                    end else begin
+                        next_state = START_TRANSMIT_WORD;
+                    end
+                end
+            WAIT_STATE_2MS: 
+                if (wait_counter == 20'h50) begin
+                    next_state = START_GET_WORD;
+                end
+            WAIT_STATE_1MS:
+                if (wait_counter == 20'h28) begin
+                    if (counter == 1625 || counter == 1630) begin
+                        next_state = START_GET_WORD;
+                    end else begin
+                        next_state = START_TRANSMIT_FIR;
+                    end
+                end
+            GET_WORD_BRAM_WAITOR:
+                if (wait_bram_count_fir == 1)
+                    next_state = START_TRANSMIT_FIR;
+                else if (wait_bram_count_gain_table == 1)
+                    next_state = START_TRANSMIT_MIXER_GAIN_TABLE;
+            ANALYSES_NEXT:
+                if (counter == 1 || counter == 8)
+                    next_state = WAIT_STATE;
+                else if (((data_from_AD & 8'hf8) !== 8) & counter == 2)
+                    next_state = DEVICE_ID_ERROR;
+                else if (counter_BBPLL == 1023)
+                    next_state = DEVICE_ID_ERROR;
+                else if (((data_from_AD & 8'h0F) !== 5) & counter == 1625)  //_calibrate_synth_charge_pumps
+                    next_state = DEVICE_ID_ERROR;
+                else if (counter_charge_pumps == 31) //_calibrate_synth_charge_pumps
+                    next_state = DEVICE_ID_ERROR;
+                    
+                else if (counter == 1624 || counter == 1626 || counter == 1629) //_calibrate_synth_charge_pumps
+                    next_state = WAIT_STATE;
+                else if (counter == 1649) //_tune_helper_RX
+                    next_state = WAIT_STATE; 
+                else if (((data_from_AD & 8'h02) == 0) & counter == 1650)  //_tune_helper_RX
+                    next_state = DEVICE_ID_ERROR;
+                else if (counter == 1668) //_tune_helper_TX
+                    next_state = WAIT_STATE;    
+                else if (((data_from_AD & 8'h02) == 0) & counter == 1669)  //_tune_helper_TX
+                    next_state = DEVICE_ID_ERROR;     
+                            
+                else if (counter == 1626) begin
+                    next_state = START_GET_WORD;
+                end else if (counter == 24)
+                    next_state = WAIT_STATE_2MS;
+                else if (counter == 30)
+                    next_state = WAIT_STATE_1MS;
+                else if (counter > 30 & counter <= 1571)
+                    next_state = START_TRANSMIT_FIR;
+                    
+                else if (counter > 1670 & counter <= 1752)
+                    next_state = START_TRANSMIT_MIXER_GAIN_TABLE;    
+                    
+                else if (counter == 1624)
+                    next_state = WAIT_STATE_1MS;
+                else if (counter == 1901)
+                    next_state = FINISH_INIT;
+                else
+                    next_state = START_TRANSMIT_WORD;
+            DEVICE_ID_ERROR:
+                if (wait_counter == 20'h30D40)
+                    next_state = RESETB_DOWN;
+            FINISH_INIT:
+                if (wait_counter == 20'h30D40)
+                    next_state = RESETB_DOWN;
+        endcase
+    end
+endmodule
