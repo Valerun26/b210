@@ -19,6 +19,8 @@ umnoj1 = sum1 * (1/2);
 y = umnoj1;
 start_pos = origin + tau;
 
+vector_sort = zeros(size(n));
+
 for k = 0:N/2
     delay_pos1 = origin + k * 2*tau;
     delay1 = zeros(size(n));
@@ -27,10 +29,18 @@ for k = 0:N/2
     delay_pos2 = start_pos + k * 2*tau;
     delay2 = zeros(size(n));
     delay2(n == delay_pos2) = 0.5;
-
+    
     yx = delay1 + delay2;
     
 end
+
+
+
+figure
+stem(n,vector_sort)
+title('Vector sort');
+xlabel('Время, нс');
+ylabel('Амплитуда');
 
 ran1 = sort(y);
 
