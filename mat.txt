@@ -1,0 +1,52 @@
+close all; clc; clear;
+N = 60;
+tau = 2;
+origin = 1;
+n_start = 0;
+n_end = N * tau + 5;
+n = n_start : n_end;
+
+x = zeros(size(n));
+x(n==origin) = 1;
+
+del1 = zeros(size(n));
+del1 (n == tau + origin) = 1;
+
+sum1 = x + del1;
+umnoj1 = sum1 * (1/2);
+
+y = zeros(size(n));
+y(1,4) = umnoj1(1, 4); %костыль жесткий, исправить потом
+
+for k = 1:N
+    delay_pos = origin + k * tau; %костыль жесткий, исправить
+    delay = zeros(size(n));
+    delay(n == delay_pos) = 0.5;
+    y = y + delay;
+end
+
+ran1 = sort(y);
+
+figure
+stem(n,x)
+title('Исходный сигнал');
+xlabel('Время, нс');
+ylabel('Амплитуда');
+
+figure
+stem(n,umnoj1)
+title('Исходный сигнал + Задержанный');
+xlabel('Время, нс');
+ylabel('Амплитуда');
+
+figure
+stem(n,y)
+title('Задержанный сигнал');
+xlabel('Время, нс');
+ylabel('Амплитуда');
+
+figure
+stem(n,ran1)
+title('RAN1');
+xlabel('Время, нс');
+ylabel('Амплитуда');
