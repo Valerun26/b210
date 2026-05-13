@@ -1,7 +1,7 @@
 close all; clc; clear;
-N = 60;
+N = 120;
 tau = 2;
-origin = 1;
+origin = 1; %поменяется на тау
 n_start = 0;
 n_end = N * tau + 5;
 n = n_start : n_end;
@@ -15,17 +15,29 @@ del1 (n == tau + origin) = 1;
 sum1 = x + del1;
 umnoj1 = sum1 * (1/2);
 
-y = zeros(size(n));
-y(1,4) = umnoj1(1, 4); %костыль жесткий, исправить потом
 
-for k = 1:N
-    delay_pos = origin + k * tau; %костыль жесткий, исправить
-    delay = zeros(size(n));
-    delay(n == delay_pos) = 0.5;
-    y = y + delay;
+y = umnoj1;
+start_pos = origin + tau;
+
+for k = 0:N/2
+    delay_pos1 = origin + k * 2*tau;
+    delay1 = zeros(size(n));
+    delay1(n == delay_pos1) = 0.5;
+
+    delay_pos2 = start_pos + k * 2*tau;
+    delay2 = zeros(size(n));
+    delay2(n == delay_pos2) = 0.5;
+
+    yx = delay1 + delay2;
+    
 end
 
 ran1 = sort(y);
+
+pered_plus_x = zeros(size(n));
+pered_plus_x (n == N/2 * tau) = 1;
+
+add1 = pered_plus_x - ran1;
 
 figure
 stem(n,x)
@@ -40,7 +52,7 @@ xlabel('Время, нс');
 ylabel('Амплитуда');
 
 figure
-stem(n,y)
+stem(n,yx)
 title('Задержанный сигнал');
 xlabel('Время, нс');
 ylabel('Амплитуда');
@@ -48,5 +60,17 @@ ylabel('Амплитуда');
 figure
 stem(n,ran1)
 title('RAN1');
+xlabel('Время, нс');
+ylabel('Амплитуда');
+
+figure
+stem(n,pered_plus_x)
+title('pered_plus_x');
+xlabel('Время, нс');
+ylabel('Амплитуда');
+
+figure
+stem(n,add1)
+title('Исходный сигнал');
 xlabel('Время, нс');
 ylabel('Амплитуда');
