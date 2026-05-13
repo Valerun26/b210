@@ -1,0 +1,74 @@
+close all; clc; clear;
+
+% Параметры
+N_groups = 60;          % количество групп (итераций)
+tau = 2;                % задержка
+origin = 1;             % первый отсчёт первой группы
+
+step = 2 * tau;         % шаг между группами = 4
+amplitude = 0.5;        % амплитуда каждого отсчёта
+
+% Формируем все группы: (origin + i*step, origin+tau + i*step), i = 0..N_groups-1
+groups = zeros(N_groups, 2);
+for i = 0:N_groups-1
+    groups(i+1, 1) = origin + i * step;
+    groups(i+1, 2) = origin + tau + i * step;
+end
+
+% Максимальное время (последний отсчёт последней группы)
+t_max = max(groups(:));
+t = 0 : t_max;          % все моменты времени
+
+% Матрица V: строки = время, столбцы = группы
+V = zeros(length(t), N_groups);
+
+% Заполняем: для каждой группы ставим amplitude в нужные моменты
+for g = 1:N_groups
+    pos1 = groups(g, 1);
+    pos2 = groups(g, 2);
+    if pos1 <= t_max
+        V(pos1 + 1, g) = amplitude;
+    end
+    if pos2 <= t_max
+        V(pos2 + 1, g) = amplitude;
+    end
+end
+
+% === Проверка: вывод векторов v для некоторых t (как в примере) ===
+fprintf('Векторы v(t):\n');
+for t_check = [0, 1, 3, 5, 7, 9, 11, 241, 243]
+    row = t_check + 1;
+    if row <= size(V,1)
+        v = V(row, :);
+        % выводим индексы групп, где не ноль
+        idx = find(v > 0);
+        if isempty(idx)
+            fprintf('t=%3d -> [', t_check);
+            fprintf('0,');
+            fprintf(']\n');
+        else
+            fprintf('t=%3d -> [', t_check);
+            for i = 1:length(idx)
+                fprintf('%d', idx(i));
+                if i < length(idx), fprintf(','); end
+            end
+            fprintf(']  (амплитуда = %g)\n', amplitude);
+        end
+    end
+end
+
+% === Визуализация суммарного сигнала (сумма по всем группам) ===
+total = sum(V, 2);
+figure;
+stem(t, total, 'b');
+title('Суммарный сигнал всех групп (амплитуда 0.5 в каждом отсчёте)');
+xlabel('t'); ylabel('Амплитуда');
+grid on;
+
+% === Тепловая карта активности групп ===
+figure;
+imagesc(t, 1:N_groups, V');
+colormap(gray);
+colorbar;
+xlabel('Время t'); ylabel('Номер группы');
+title('Активность групп (белый = 0.5, чёрный = 0)');
