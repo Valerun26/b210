@@ -1,0 +1,98 @@
+close all; clc; clear;
+
+% ========== НАСТРОЙКИ (меняйте здесь) ==========
+signal_type = 'sawtooth';   % 'delta' или 'sawtooth'
+tau = 3;                    % задержка (в отсчётах)
+N_groups = 10;              % количество групп (столбцов V)
+origin = 1;                 % начальная позиция (начало первого импульса)
+amplitude = 1;              % максимальная амплитуда исходного импульса
+saw_length = 5;             % длительность пилообразного импульса (в отсчётах), только для 'sawtooth'
+step = 2 * tau;             % шаг между группами (можно менять, но по условию 2*tau)
+% ===============================================
+
+% Определяем максимальное время: нужно учесть длину импульса + все сдвиги
+t_max_signal = origin + saw_length - 1;   % для дельты saw_length=1
+t_max_V = origin + (N_groups-1)*step + tau + saw_length + 5; % запас
+t = 0 : t_max_V;
+
+% ===== 1. Исходный сигнал x(t) =====
+x = zeros(size(t));
+if strcmp(signal_type, 'delta')
+    % Единичный отсчёт
+    x(t == origin) = amplitude;
+elseif strcmp(signal_type, 'sawtooth')
+    % Пилообразный импульс: линейное нарастание от 0 до amplitude
+    for k = 1:saw_length
+        pos = origin + k - 1;
+        if pos <= t_max_V
+            x(pos + 1) = amplitude * (k-1) / (saw_length-1);
+        end
+    end
+end
+
+% ===== 2. Задержанная версия x_delayed (сдвиг на tau) =====
+x_delayed = zeros(size(t));
+for idx = 1:length(t)
+    src_t = t(idx) - tau;
+    if src_t >= 0
+        src_idx = find(t == src_t, 1);
+        if ~isempty(src_idx)
+            x_delayed(idx) = x(src_idx);
+        end
+    end
+end
+
+% ===== 3. Сумма исходного и задержанного, умножение на 0.5 =====
+y = 0.5 * (x + x_delayed);
+
+% ===== 4. Построение матрицы V: столбцы – сдвинутые копии y =====
+% Первая копия – без сдвига (g=1), вторая – сдвиг на step, третья – 2*step, ...
+V = zeros(length(t), N_groups);
+for g = 1:N_groups
+    shift = (g-1) * step;
+    for idx = 1:length(t)
+        orig_t = t(idx) - shift;
+        if orig_t >= 0
+            orig_idx = find(t == orig_t, 1);
+            if ~isempty(orig_idx)
+                V(idx, g) = y(orig_idx);
+            end
+        end
+    end
+end
+
+% ===== 5. Анализ V: сортировка строк и середина =====
+V_sorted = sort(V, 2);                % сортировка по возрастанию в каждой строке
+center_col = ceil(N_groups / 2);      % центральный столбец (для 10 -> 5)
+middle_values = V_sorted(:, center_col);
+
+% ===== 6. Визуализация =====
+figure('Name', 'Сигналы и преобразования');
+subplot(2,2,1);
+plot(t, x, 'b', 'LineWidth', 1.5);
+title(sprintf('Исходный сигнал (%s)', signal_type));
+xlabel('t'); ylabel('Амплитуда'); grid on; xlim([0, t_max_V]);
+
+subplot(2,2,2);
+plot(t, y, 'r', 'LineWidth', 1.5);
+title(sprintf('0.5*(x + delay_{%d})', tau));
+xlabel('t'); ylabel('Амплитуда'); grid on; xlim([0, t_max_V]);
+
+subplot(2,2,3);
+imagesc(t, 1:N_groups, V');
+colormap('jet'); colorbar;
+xlabel('t'); ylabel('Номер группы');
+title('Матрица V (столбцы – сдвинутые копии y)');
+
+subplot(2,2,4);
+plot(t, middle_values, 'g-o', 'LineWidth', 1);
+xlabel('t'); ylabel('Значение');
+title('Середина отсортированной строки V');
+grid on; xlim([0, t_max_V]);
+
+% Дополнительно: суммарный сигнал всех групп
+total_signal = sum(V, 2);
+figure('Name', 'Суммарный сигнал');
+plot(t, total_signal, 'm', 'LineWidth', 1.5);
+title('Сумма всех сдвинутых копий y');
+xlabel('t'); ylabel('Амплитуда'); grid on;
