@@ -1,0 +1,81 @@
+close all; clc; clear;
+
+tau = 5;                    % задержка (в отсчётах)
+N_groups = 10;              % количество групп (столбцов V)
+origin = 0;                 % начальная позиция (начало первого импульса)
+amplitude = 1;              % максимальная амплитуда исходного импульса
+saw_length = 50;            % длительность пилообразного импульса (в отсчётах), только для 'sawtooth'
+step = 2 * tau;             % шаг между группами (можно менять, но по условию 2*tau)
+
+
+% Определяем максимальное время: нужно учесть длину импульса + все сдвиги
+t_max_signal = origin + saw_length - 1;   
+t_max_V = origin + (N_groups-1)*step + tau + saw_length + 5;
+t = 0 : t_max_V;
+
+
+x = zeros(size(t));
+for k = 1:saw_length
+      pos = origin + k - 1; 
+    if pos <= t_max_V
+       x(pos + 1) = amplitude * (k-1) / (saw_length-1);
+    end
+end
+    
+x_delayed = zeros(size(t));
+for idx = 1:length(t)
+    src_t = t(idx) - tau;
+    if src_t >= 0
+        src_idx = find(t == src_t, 1);
+        if ~isempty(src_idx)
+            x_delayed(idx) = x(src_idx);
+        end
+    end
+end
+
+
+y = 0.5 * (x + x_delayed);
+
+
+% Первая копия – без сдвига (g=1), вторая – сдвиг на step, третья – 2*step, ...
+V = zeros(length(t), N_groups);
+for g = 1:N_groups
+    shift = (g-1) * step;
+    for idx = 1:length(t)
+        orig_t = t(idx) - shift;
+        if orig_t >= 0
+            orig_idx = find(t == orig_t, 1);
+            if ~isempty(orig_idx)
+                V(idx, g) = y(orig_idx);
+            end
+        end
+    end
+end
+
+
+V_sorted = sort(V, 2);                % сортировка по возрастанию в каждой строке
+center_col = ceil(N_groups / 2);      % центральный столбец (для 10 -> 5)
+middle_values = V_sorted(:, center_col);
+
+
+figure
+subplot(2,1,1);
+plot(t, x, 'b', 'LineWidth', 1.5);
+title(sprintf('Исходный сигнал'));
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+subplot(2,1,2);
+plot(t, y, 'r', 'LineWidth', 1.5);
+title(sprintf('Задержанный сигнал'));
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
+
+% Дополнительно: суммарный сигнал всех групп
+total_signal = sum(V, 2);
+figure
+plot(t, total_signal, 'm', 'LineWidth', 1.5);
+title('Сумма всех сдвинутых копий');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+
+
+
