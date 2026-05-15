@@ -1,0 +1,107 @@
+close all; clc; clear;
+
+% ========== ПАРАМЕТРЫ ==========
+tau = 1;                     % задержка
+N_groups = 60;               % количество групп (столбцов)
+origin = 0;                  % начало (не важно для шума)
+amplitude = 1;               % амплитуда (для треугольного)
+peak_position = 15;          % вершина треугольника (если нужен)
+% Временной диапазон
+t_max = 1e7;                 % 10 миллионов отсчётов
+t = 0 : t_max;               % ось времени
+
+% ---- Генерация сигнала x (шум или треугольник) ----
+% Вариант: белый гауссовский шум с СКО = 1
+x = randn(size(t));          % СКО = 1, среднее 0
+% Если нужен треугольный импульс, раскомментировать следующий блок:
+% t_right = 2*peak_position - origin;
+% x = zeros(size(t));
+% for idx = 1:length(t)
+%     tt = t(idx);
+%     if tt >= origin && tt <= peak_position
+%         x(idx) = amplitude * (tt - origin) / (peak_position - origin);
+%     elseif tt > peak_position && tt <= t_right
+%         x(idx) = amplitude * (t_right - tt) / (t_right - peak_position);
+%     end
+% end
+
+% ---- Задержка и сумма (векторизовано) ----
+x_delayed = [zeros(1, tau), x(1:end-tau)];
+y = 0.5 * (x + x_delayed);
+
+% ---- Вычисление middle_values (медиана сдвинутых копий y) ----
+step = 2 * tau;
+center_col = ceil(N_groups / 2);   % индекс медианы (при нечётном N_groups)
+middle_values = zeros(size(t));
+% Для ускорения: предварительно выделяем массив для значений
+vals = zeros(1, N_groups);
+for idx = 1:length(t)
+    current_t = t(idx);
+    % Заполняем vals значениями y(current_t - k*step)
+    for k = 0:N_groups-1
+        pos = current_t - k * step;
+        if pos >= 0
+            vals(k+1) = y(pos + 1);   % +1 из-за индексации с 1
+        else
+            vals(k+1) = 0;
+        end
+    end
+    % Сортируем и берём центральный элемент
+    vals_sorted = sort(vals);
+    middle_values(idx) = vals_sorted(center_col);
+end
+
+% ---- Дальнейшие операции (как в вашем коде, без матриц) ----
+big_step = N_groups * tau;
+pered_plus_x = [zeros(1, big_step), x(1:end-big_step)];
+pered_pu_x = [zeros(1, big_step), pered_plus_x(1:end-big_step)];
+
+% Вычитание middle_values (длины t_max+1) из pered_plus_x
+add1 = pered_plus_x - middle_values;
+abs1 = abs(add1);
+
+% Задержка abs1? Здесь по вашему коду abs1_delayed — сдвиг исходного x
+abs1_delayed = [zeros(1, big_step + tau), x(1:end-big_step-tau)];
+y1 = 0.5 * (abs1 + abs1_delayed);
+
+% ---- Вычисление middle_values1 для y1 (аналогично) ----
+middle_values1 = zeros(size(t));
+for idx = 1:length(t)
+    current_t = t(idx);
+    for k = 0:N_groups-1
+        pos = current_t - k * step;
+        if pos >= 0
+            vals(k+1) = y1(pos + 1);
+        else
+            vals(k+1) = 0;
+        end
+    end
+    vals_sorted = sort(vals);
+    middle_values1(idx) = vals_sorted(center_col);
+end
+
+% ---- Пороговое решение (как в вашем коде) ----
+% В вашем коде trans2(1, :) * 5 — умножается первый элемент, так и оставим
+koef_k = middle_values1(1) * 5;   % берём первое значение
+
+pered_add_middle_values = [zeros(1, big_step), middle_values(1:end-big_step)];
+sum_pered_pu = pered_add_middle_values + koef_k;
+porog = max(sum_pered_pu);
+
+if any(pered_pu_x > porog)
+    disp('Сигнал есть');
+else
+    disp('Сигнала нет');
+end
+
+% ---- (Опционально) графики для малого t_max, например 1000 ----
+if t_max <= 2000
+    figure;
+    plot(t, x); title('Сигнал x');
+    figure;
+    plot(t, middle_values); title('Медиана сдвинутых копий y');
+    figure;
+    plot(t, abs1); title('abs1');
+    figure;
+    plot(t, y1); title('y1');
+end
