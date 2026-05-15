@@ -80,7 +80,7 @@ for idx = 1:length(t)
     middle_values1(idx) = vals_sorted(center_col);
 end
 
-koef_k = middle_values1(1, :) * 0.73005;   % умножение на k
+koef_k = middle_values1(1, :) * 0.7300923;   % умножение на k
 
 pered_add_middle_values = [zeros(1, big_step), middle_values(1:end-big_step)];
 sum_pered_pu = pered_add_middle_values + koef_k;
