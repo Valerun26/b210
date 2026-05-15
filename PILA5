@@ -1,0 +1,213 @@
+close all; clc; clear;
+
+tau = 1;                    % задержка
+N_groups = 10;              % количество групп
+origin = 0;                 % начало первого импульса
+amplitude = 1;              % максимальная амплитуда исходного импульса
+saw_length = 15; %3, 50      % длительность импульса
+step = 2 * tau;             % шаг между группами
+
+
+t_max_signal = origin + saw_length - 1;   
+t_max_V = origin + (N_groups-1)*step + tau + saw_length + 5;
+t = 0 : 300 
+%t = 0 : t_max_V;
+
+
+x = zeros(size(t));
+for k = 1:saw_length
+      pos = origin + k - 1; 
+    if pos <= t_max_V
+       x(pos + 1) = amplitude * (k-1) / (saw_length-1);
+    end
+end
+    
+x_delayed = zeros(size(t));
+for idx = 1:length(t)
+    src_t = t(idx) - tau;
+    if src_t >= 0
+        src_idx = find(t == src_t, 1);
+        if ~isempty(src_idx)
+            x_delayed(idx) = x(src_idx);
+        end
+    end
+end
+
+
+y = 0.5 * (x + x_delayed); %сумма исходного и задержанного и умножение на 1/2
+
+
+% первая копия без сдвига, вторая – сдвиг на step, третья – 2*step и т.д.
+V = zeros(length(t), N_groups);
+for g = 1:N_groups
+    shift = (g-1) * step;
+    for idx = 1:length(t)
+        orig_t = t(idx) - shift;
+        if orig_t >= 0
+            orig_idx = find(t == orig_t, 1);
+            if ~isempty(orig_idx)
+                V(idx, g) = y(orig_idx);
+            end
+        end
+    end
+end
+
+
+V_sorted = sort(V, 2);                % сортировка по возрастанию в каждой строке
+center_col = ceil(N_groups / 2);      % центральный столбец (для 10 будет 5)
+middle_values = V_sorted(:, center_col);
+
+big_step = N_groups * tau; % (N/2)*tau
+
+pered_plus_x = zeros(size(t));
+for idx = 1:length(t)
+    src_t = t(idx) - big_step;
+    if src_t >= 0
+        src_idx = find(t == src_t, 1);
+        if ~isempty(src_idx)
+            pered_plus_x(idx) = x(src_idx);
+        end
+    end
+end
+
+pered_pu_x = zeros(size(t));
+for idx = 1:length(t)
+    src_t = t(idx) - big_step;
+    if src_t >= 0
+        src_idx = find(t == src_t, 1);
+        if ~isempty(src_idx)
+            pered_pu_x(idx) = pered_plus_x(src_idx);
+        end
+    end
+end
+
+trans1 = transpose(middle_values);
+
+add1 = pered_plus_x - trans1;
+
+abs1 = abs(add1);
+
+abs1_delayed = zeros(size(t));
+for idx = 1:length(t)
+    src_t = t(idx) - big_step - tau;
+    if src_t >= 0
+        src_idx = find(t == src_t, 1);
+        if ~isempty(src_idx)
+            abs1_delayed(idx) = x(src_idx);
+        end
+    end
+end
+
+y1 = 0.5 * (abs1 + abs1_delayed);
+
+V1 = zeros(length(t), N_groups);
+for g = 1:N_groups
+    shift = (g-1) * step;
+    for idx = 1:length(t)
+        orig_t = t(idx) - shift;
+        if orig_t >= 0
+            orig_idx = find(t == orig_t, 1);
+            if ~isempty(orig_idx)
+                V1(idx, g) = y1(orig_idx);
+            end
+        end
+    end
+end
+
+
+V_sorted1 = sort(V1, 2);                % сортировка по возрастанию в каждой строке
+center_col = ceil(N_groups / 2);      % центральный столбец (для 10 будет 5)
+middle_values1 = V_sorted1(:, center_col);
+
+trans2 = transpose(middle_values1);
+
+koef_k = trans2(1, :) * 5; % проверка умножения на k 
+
+pered_add_middle_values = zeros(size(t));
+for idx = 1:length(t)
+    src_t = t(idx) - big_step;
+    if src_t >= 0
+        src_idx = find(t == src_t, 1);
+        if ~isempty(src_idx)
+            pered_add_middle_values(idx) = middle_values(src_idx);
+        end
+    end
+end
+
+sum_pered_pu = pered_add_middle_values + koef_k;
+
+porog = max(sum_pered_pu);
+
+if pered_pu_x(:) > porog
+    nalich = 1;
+    disp('Сигнал есть');
+else
+    nalich = 0;
+    disp('Сигнала нет');
+end
+
+figure
+subplot(2,1,1);
+plot(t, x, 'b', 'LineWidth', 1.5);
+title(sprintf('Исходный сигнал'));
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+subplot(2,1,2);
+plot(t, y, 'r', 'LineWidth', 1.5);
+title(sprintf('Задержанный сигнал'));
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
+figure
+plot(t, pered_plus_x, 'r', 'LineWidth', 1.5);
+title(sprintf('Задержанный сигнал на N/2*tau'));
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+figure
+plot(t, pered_pu_x, 'r', 'LineWidth', 1.5);
+title(sprintf('Задержанный сигнал на еще N/2*tau'));
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+figure
+plot(t, add1, 'r', 'LineWidth', 1.5);
+title(sprintf('Сигналы после блока add'));
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+figure
+plot(t, abs1, 'r', 'LineWidth', 1.5);
+title(sprintf('Модуль сигнала'));
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+% суммарный сигнал всех групп
+total_signal = sum(V, 2);
+figure
+plot(t, total_signal, 'm', 'LineWidth', 1.5);
+title('Сумма всех сдвинутых копий');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+figure
+plot(t, trans1, 'r', 'LineWidth', 1.5);
+title('После ранжирования отсчеты');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+
+figure
+subplot(2,1,1);
+plot(t, abs1, 'b', 'LineWidth', 1.5);
+title(sprintf('Модуль сигнал'));
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
+subplot(2,1,2);
+plot(t, y1, 'r', 'LineWidth', 1.5);
+title(sprintf('Задержанный модуль сигнал'));
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
+
+total_signal1 = sum(V1, 2);
+figure
+plot(t, total_signal1, 'r', 'LineWidth', 1.5);
+title('Сумма всех сдвинутых копий');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+figure
+plot(t, trans2, 'r', 'LineWidth', 1.5);
+title('После ранжирования2 отсчеты');
+xlabel('t'); ylabel('Амплитуда'); grid on;
