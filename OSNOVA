@@ -1,0 +1,218 @@
+close all; clc; clear;
+
+
+tau = 1;                    % задержка
+N_groups = 60;              % количество групп
+origin = 0;                 % начало первого импульса 
+amplitude = 1;              % амплитуда
+peak_position = 15;         % положение максимума
+step = 2 * tau;             % шаг между группами
+
+% определяем правую границу треугольника 
+t_right = 2 * peak_position - origin; 
+
+% максимальное время для всей системы
+t_max_V = origin + (N_groups-1)*step + tau + (t_right - origin) + 5;
+t = 0 : 300;  
+x = zeros(size(t));
+for idx = 1:length(t)
+    tt = t(idx);
+    if tt >= origin && tt <= peak_position
+        x(idx) = amplitude * (tt - origin) / (peak_position - origin);
+    elseif tt > peak_position && tt <= t_right
+        x(idx) = amplitude * (t_right - tt) / (t_right - peak_position);
+    end
+end
+
+x = abs(x);
+
+% задержка на tau
+x_delayed = [zeros(1, tau), x(1:end-tau)];
+
+% сумма и умножение 
+y = 0.5 * (x + x_delayed);
+
+%  формирование матрицы V 
+V = zeros(length(t), N_groups);
+for g = 1:N_groups
+    shift = (g-1) * step;
+    if shift == 0
+        V(:, g) = y;
+    else
+        if shift < length(t)
+            V(shift+1:end, g) = y(1:end-shift);
+        end
+    end
+end
+
+% ранжирование и середина 
+V_sorted = sort(V, 2);
+center_col = ceil(N_groups / 2);
+middle_values = V_sorted(:, center_col);
+
+% дальнейшие операции 
+big_step = N_groups * tau;   % (N/2)*tau
+
+% сдвиг x на big_step
+pered_plus_x = [zeros(1, big_step), x(1:end-big_step)];
+
+% еще один сдвиг 
+pered_pu_x = [zeros(1, big_step), pered_plus_x(1:end-big_step)];
+
+trans1 = transpose(middle_values);
+add1 = pered_plus_x - trans1;
+abs1 = abs(add1);
+
+% задержка abs1 
+abs1_delayed = [zeros(1, big_step+tau), x(1:end-big_step-tau)];
+
+y1 = 0.5 * (abs1 + abs1_delayed);
+
+% матрица V1 для y1
+V1 = zeros(length(t), N_groups);
+for g = 1:N_groups
+    shift = (g-1) * step;
+    if shift == 0
+        V1(:, g) = y1;
+    else
+        if shift < length(t)
+            V1(shift+1:end, g) = y1(1:end-shift);
+        end
+    end
+end
+
+V_sorted1 = sort(V1, 2);
+middle_values1 = V_sorted1(:, center_col);
+trans2 = transpose(middle_values1);
+
+ 
+koef_k = trans2(1, :) * 3.9; % умножение на k
+
+% сдвиг middle_values на big_step
+pered_add_middle_values = [zeros(1, big_step), middle_values(1:end-big_step)'];
+
+sum_pered_pu = pered_add_middle_values + koef_k;
+porog = max(sum_pered_pu);
+
+
+if any(pered_pu_x > porog)
+    nalich = 1;
+    disp('Сигнал есть');
+else
+    nalich = 0;
+    disp('Сигнала нет');
+end
+
+
+% устройство отбора локальных максимумов
+
+local_max1 = pered_pu_x;
+local_max2 = [zeros(1, tau), local_max1(1:end-tau)];
+local_max3 = [zeros(1, tau), local_max2(1:end-tau)];
+
+pu_local_max1 = local_max1 < local_max2;
+pu_local_max2 = local_max2 > local_max3;
+
+pu_local_max_and = and(pu_local_max1, pu_local_max2);
+
+
+
+figure
+subplot(2,1,1);
+plot(t, x, 'b', 'LineWidth', 1.5);
+title('Исходный сигнал (треугольный)');
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+subplot(2,1,2);
+plot(t, y, 'r', 'LineWidth', 1.5);
+title('Задержанный сигнал y = 0.5*(x + delay)');
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
+figure
+plot(t, pered_plus_x, 'r', 'LineWidth', 1.5);
+title('Задержанный сигнал на N/2*tau');
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+figure
+plot(t, pered_pu_x, 'r', 'LineWidth', 1.5);
+title('Задержанный сигнал на ещё N/2*tau');
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+figure
+plot(t, add1, 'r', 'LineWidth', 1.5);
+title('Сигналы после блока add (pered_plus_x - trans1)');
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+figure
+plot(t, abs1, 'r', 'LineWidth', 1.5);
+title('Модуль сигнала');
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+total_signal = sum(V, 2);
+figure
+plot(t, total_signal, 'm', 'LineWidth', 1.5);
+title('Сумма всех сдвинутых копий y');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+figure
+plot(t, trans1, 'r', 'LineWidth', 1.5);
+title('После ранжирования (middle values)');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+figure
+subplot(2,1,1);
+plot(t, abs1, 'b', 'LineWidth', 1.5);
+title('Модуль сигнала');
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+subplot(2,1,2);
+plot(t, y1, 'r', 'LineWidth', 1.5);
+title('Задержанный модуль сигнала y1 = 0.5*(abs1 + abs1_delayed)');
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
+total_signal1 = sum(V1, 2);
+figure
+plot(t, total_signal1, 'r', 'LineWidth', 1.5);
+title('Сумма всех сдвинутых копий y1');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+figure
+plot(t, trans2, 'r', 'LineWidth', 1.5);
+title('После ранжирования 2 (middle values для y1)');
+xlabel('t'); ylabel('Амплитуда'); grid on;
+
+figure
+subplot(3,1,1);
+plot(t, local_max1, 'r', 'LineWidth', 1.5);
+title('Локальный макс1');
+xlabel('t'); ylabel('Амплитуда'); grid on
+subplot(3,1,2);
+plot(t, local_max2, 'r', 'LineWidth', 1.5);
+title('Локальный макс2');
+xlabel('t'); ylabel('Амплитуда'); grid on
+subplot(3,1,3);
+plot(t, local_max3, 'r', 'LineWidth', 1.5);
+title('Локальный макс3');
+xlabel('t'); ylabel('Амплитуда'); grid on
+
+figure
+subplot(3,1,1);
+plot(t, pu_local_max1, 'b', 'LineWidth', 1.5);
+title('ПУ локал 1');
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+subplot(3,1,2);
+plot(t, pu_local_max2, 'r', 'LineWidth', 1.5);
+title('ПУ локал 2');
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+subplot(3,1,3);
+plot(t, pu_local_max_and, 'r', 'LineWidth', 1.5);
+title('ПУ локал AND');
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
+
+figure;
+plot(t, pered_pu_x, 'b');
+hold on;
+yline(porog, 'r--', 'LineWidth', 1.5);
+hold off;
+title(sprintf('После ПУ'));
+xlabel('t'); ylabel('Амплитуда'); grid on; 
+
