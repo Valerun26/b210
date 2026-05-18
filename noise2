@@ -7,12 +7,13 @@ origin = 0;                  % начало
 amplitude = 1;               % амплитуда 
 peak_position = 15;          
 % временной диапазон
-t_max = 1e3;                 % 10 миллионов отсчётов
+t_max = 1e7;                 % 10 миллионов отсчётов
 t = 0 : t_max;               % ось времени
 
 
 rng('default');
-x = rand(size(t));          % СКО = 1
+x = randn(size(t));          % СКО = 1
+
 
 % t_right = 2*peak_position - origin;
 % x = zeros(size(t));
@@ -80,7 +81,7 @@ for idx = 1:length(t)
     middle_values1(idx) = vals_sorted(center_col);
 end
 
-koef_k = middle_values1(1, :) * 0.7300923;   % умножение на k
+koef_k = middle_values1(1, :) * 4.41505;   % умножение на k
 
 pered_add_middle_values = [zeros(1, big_step), middle_values(1:end-big_step)];
 sum_pered_pu = pered_add_middle_values + koef_k;
@@ -97,10 +98,16 @@ disp(scolko);
 F = (sum(pered_pu_x(:) > porog)) / t_max;
 
 
-figure;
-plot(t, porog);
-title(sprintf('После ПУ'));
-xlabel('t'); ylabel('Амплитуда'); grid on; 
+SKO = std(x);
+
+
+%figure;
+%plot(t, pered_pu_x, 'b');
+%hold on;
+%yline(porog, 'r--', 'LineWidth', 1.5);
+%hold off;
+%title(sprintf('После ПУ'));
+%xlabel('t'); ylabel('Амплитуда'); grid on; 
 
 
 %disp(F);
