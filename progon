@@ -1,0 +1,95 @@
+close all; clc; clear;
+
+% ========== ОБЩИЕ ПАРАМЕТРЫ ==========
+tau = 1;
+N_groups = 60;
+origin = 0;
+amplitude = 1;
+peak_position = 15;
+t_max = 1e5;                     % длина выборки (можно 1e5 или 1e6)
+t = 0 : t_max;
+
+step = 2 * tau;
+center_col = ceil(N_groups / 2);
+big_step = N_groups * tau;
+k = 0.73;                        % коэффициент, подберите под PFA=1e-5
+
+% ========== МАССИВ ДЛЯ РЕЗУЛЬТАТОВ ==========
+scolko_array = zeros(1, 50);
+
+% ========== ЦИКЛ ПО 50 ПРОГОНАМ ==========
+for run = 1:50
+    % --- Генерация шума (новый seed каждый раз) ---
+    x = randn(size(t));          % СКО = 1
+    
+    % --- Задержка и сумма ---
+    x_delayed = [zeros(1, tau), x(1:end-tau)];
+    y = 0.5 * (x + x_delayed);
+    
+    % --- middle_values (медиана сдвинутых копий y) ---
+    vals = zeros(1, N_groups);
+    middle_values = zeros(size(t));
+    for idx = 1:length(t)
+        current_t = t(idx);
+        for kk = 0:N_groups-1
+            pos = current_t - kk * step;
+            if pos >= 0
+                vals(kk+1) = y(pos + 1);
+            else
+                vals(kk+1) = 0;
+            end
+        end
+        middle_values(idx) = median(vals);
+    end
+    
+    % --- Дальнейшие преобразования ---
+    pered_plus_x = [zeros(1, big_step), x(1:end-big_step)];
+    pered_pu_x = [zeros(1, big_step), pered_plus_x(1:end-big_step)];
+    add1 = pered_plus_x - middle_values;
+    abs1 = abs(add1);
+    
+    abs1_delayed = [zeros(1, big_step + tau), x(1:end-big_step-tau)];
+    y1 = 0.5 * (abs1 + abs1_delayed);
+    
+    % --- middle_values1 для y1 ---
+    middle_values1 = zeros(size(t));
+    for idx = 1:length(t)
+        current_t = t(idx);
+        for kk = 0:N_groups-1
+            pos = current_t - kk * step;
+            if pos >= 0
+                vals(kk+1) = y1(pos + 1);
+            else
+                vals(kk+1) = 0;
+            end
+        end
+        middle_values1(idx) = median(vals);
+    end
+    
+    % --- Порог и подсчёт превышений ---
+    koef_k = middle_values1(1) * k;
+    pered_add_middle_values = [zeros(1, big_step), middle_values(1:end-big_step)];
+    sum_pered_pu = pered_add_middle_values + koef_k;
+    porog = max(sum_pered_pu);
+    scolko = sum(pered_pu_x > porog);
+    scolko_array(run) = scolko;
+    
+    fprintf('Прогон %2d: превышений = %d\n', run, scolko);
+end
+
+% ========== СТАТИСТИКА И ВИЗУАЛИЗАЦИЯ ==========
+mean_scolko = mean(scolko_array);
+var_scolko = var(scolko_array);
+pfa_est = mean_scolko / (t_max + 1);
+
+fprintf('\n========== РЕЗУЛЬТАТЫ ==========\n');
+fprintf('Среднее количество ложных тревог = %.2f\n', mean_scolko);
+fprintf('Дисперсия = %.2f\n', var_scolko);
+fprintf('Оценка PFA = %g (цель 1e-5)\n', pfa_est);
+
+figure;
+histogram(scolko_array, 'BinMethod', 'integer');
+xlabel('Количество ложных тревог');
+ylabel('Частота');
+title(sprintf('50 прогонов, t_{max}=%d, k=%.3f, PFA≈%g', t_max, k, pfa_est));
+grid on;
